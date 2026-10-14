@@ -26,6 +26,7 @@ data:
 logs:
   cases: "logs/cases.csv"
   run_log: "logs/run.log"
+  data_inventory: "logs/data_inventory.csv"
 
 outputs:
   tables_dir: "outputs/tables"
