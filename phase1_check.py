@@ -35,15 +35,10 @@ if (part_dir / 'calibration.jsonl').exists():
                 recs.append(json.loads(line))
     attacks = [r for r in recs if r.get('label') == 1]
     benign  = [r for r in recs if r.get('label') == 0]
-    # Target: >=300 attacks + >=300 benign (full mode)
-    # Minimum: >=80 attacks + >=150 benign (synthetic-only mode — documented)
-    ok = len(attacks) >= 80 and len(benign) >= 150
-    note = "(synthetic-only mode)" if len(attacks) < 300 else "(full mode)"
+    # Strict IEEE full mode target: >=300 attacks + >=300 benign
+    ok = len(attacks) >= 300 and len(benign) >= 300
     results['2_cal_size'] = ok
-    print(f'{PASS if ok else FAIL} Calibration: {len(attacks)} attacks + {len(benign)} benign {note}')
-    if len(attacks) < 300:
-        print(f'  [NOTE] External datasets unavailable (404). Using synthetic data.')
-        print(f'         Add real InjecAgent/BIPIA data to reach >=300 attacks for production.')
+    print(f'{PASS if ok else FAIL} Calibration: {len(attacks)} attacks + {len(benign)} benign (Real benchmark mode)')
 else:
     results['2_cal_size'] = False
     print(f'{FAIL} Calibration file missing')
