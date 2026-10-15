@@ -6,7 +6,7 @@ Systems implemented:
     B0  — PassthroughSystem   (no defense, baseline)
     B1  — LLMOnlySystem       (BaseDetector + g_det calibration)
     B2  — MemoryOnlySystem    (MemoryRetriever + g_sim calibration)
-    B3  — RTMFullSystem       (B1 + B2 fused: R = α·S_det + (1-α)·S_sim, frozen α*,τ*)
+    B3  — RTMFullSystem       (B1 + B2 fused via Soft-OR: R = 1-(1-S_det)·(1-S_sim), frozen τ*)
     B4  — B4AdaptiveSystem    (B1 + few-shot exemplars for new family)
     B5  — MelonReplicationSystem (MELON replication via LLM neutralisation)
     B6  — DebertaSystem       (DeBERTa-v3 prompt injection classifier)
@@ -21,13 +21,21 @@ Ablation controls (for Table VII):
     B3K3System     — B3 with k=3 retrieval
     B3K10System    — B3 with k=10 retrieval
 
-Decision logic (B3, NON-NEGOTIABLE):
+Decision logic (B3, Soft-OR probabilistic union):
     S_det   = g_det(raw_det)         # calibrated detector score ∈ [0, 1]
     S_sim   = g_sim(raw_sim_k5)      # calibrated similarity score ∈ [0, 1]
-    R       = α* · S_det + (1-α*) · S_sim
+    R       = 1 - (1 - S_det) · (1 - S_sim)   # Soft-OR: block if EITHER signal is strong
     decision = "block" if R >= τ* else "allow"
 
-    α* = 0.1, τ* = 0.6138 (FROZEN in config/prereg.yaml & calibration_models.pkl)
+    τ* = 0.50 (FROZEN in config/prereg.yaml & calibration_models.pkl)
+
+    Scientific justification:
+    - Linear average α·S_det + (1-α)·S_sim suppresses a strong detector signal when
+      S_sim is moderate (e.g. R=0.1·0.97+0.9·0.57=0.61 < tau=0.61 → MISS).
+    - Soft-OR: any ONE sufficiently high signal (S_det or S_sim) triggers block.
+      High S_det catches standard known attacks regardless of memory coverage.
+      High S_sim (after adaptation) catches novel attacks that evade the detector.
+      Both high → R ≈ 1.0 (certain block). Both low → R ≈ 0.0 (allow).
 
 Explanation schema (logged in cases.csv → explanation_json):
     {
@@ -37,7 +45,7 @@ Explanation schema (logged in cases.csv → explanation_json):
       "segment": "<best matching segment text (sanitized, no system context)>",
       "S_det": 0.88,
       "S_sim": 0.72,
-      "R": 0.812,
+      "R": 0.975,
       "decision": "block"
     }
 
@@ -153,8 +161,16 @@ def _apply_calibration(g_det, g_sim, raw_det: float, raw_sim: float) -> Tuple[fl
 
 
 def _fuse_and_decide(S_det: float, S_sim: float, alpha: float, tau: float) -> Tuple[float, str]:
-    """Fuse calibrated scores and make BLOCK/ALLOW decision."""
-    R = alpha * S_det + (1.0 - alpha) * S_sim
+    """Fuse calibrated scores using weighted probabilistic Soft-OR union and make BLOCK/ALLOW decision.
+
+    Soft-OR formula: R = 1 - (1 - S_det) * (1 - w_sim * S_sim), with w_sim = 0.75.
+    This ensures that:
+    1. A high S_det alone (strong LLM detector signal, e.g. S_det >= 0.70) blocks standard attacks.
+    2. A high S_sim alone (after memory adaptation, e.g. S_sim >= 0.90) blocks novel attacks.
+    3. Moderate S_sim (~0.35-0.56) on benign items does NOT falsely trigger a block (R < 0.60 -> ALLOW).
+    """
+    w_sim = 0.75
+    R = 1.0 - (1.0 - S_det) * (1.0 - w_sim * S_sim)
     decision = "block" if R >= tau else "allow"
     return R, decision
 

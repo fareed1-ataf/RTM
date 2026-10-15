@@ -84,25 +84,25 @@ class TestCalibrationHelpers(unittest.TestCase):
         self.assertAlmostEqual(R, 0.0, places=4)
 
     def test_fuse_boundary_equal_to_tau(self):
-        # R = alpha * S_det + (1-alpha) * S_sim
-        # To get R == tau with alpha=0.1: need 0.1*S_det + 0.9*S_sim = tau
-        # Choose S_det=0, S_sim=tau/0.9 (but cap at 1.0)
-        alpha, tau = 0.1, 0.5
-        S_det, S_sim = 0.0, tau / (1.0 - alpha)   # => R = 0.1*0 + 0.9*(tau/0.9) = tau
-        R, dec = self.mw._fuse_and_decide(S_det, S_sim, alpha, tau)
+        # Soft-OR: R = 1 - (1 - S_det) * (1 - 0.75 * S_sim)
+        # With S_det=tau, S_sim=0: R = tau
+        tau = 0.60
+        S_det, S_sim = tau, 0.0
+        R, dec = self.mw._fuse_and_decide(S_det, S_sim, 0.1, tau)
         self.assertAlmostEqual(R, tau, places=5)
         self.assertEqual(dec, "block")
 
     def test_fuse_alpha_one(self):
-        # alpha=1 → R = S_det only
-        R, dec = self.mw._fuse_and_decide(0.9, 0.0, 1.0, 0.5)
+        # High S_det alone blocks
+        R, dec = self.mw._fuse_and_decide(0.9, 0.0, 1.0, 0.60)
         self.assertAlmostEqual(R, 0.9, places=5)
         self.assertEqual(dec, "block")
 
     def test_fuse_alpha_zero(self):
-        # alpha=0 → R = S_sim only
-        R, dec = self.mw._fuse_and_decide(0.0, 0.9, 0.0, 0.5)
-        self.assertAlmostEqual(R, 0.9, places=5)
+        # High S_sim alone blocks
+        R, dec = self.mw._fuse_and_decide(0.0, 0.9, 0.0, 0.60)
+        expected_R = 1.0 - (1.0 - 0.0) * (1.0 - 0.75 * 0.9)
+        self.assertAlmostEqual(R, expected_R, places=5)
         self.assertEqual(dec, "block")
 
 
@@ -307,7 +307,7 @@ class TestB3RTMFullSystem(unittest.TestCase):
         b3._retriever.retrieve.assert_called_once()
 
     def test_r_formula(self):
-        """Verify R = alpha * S_det + (1 - alpha) * S_sim."""
+        """Verify R = 1 - (1 - S_det) * (1 - 0.75 * S_sim)."""
         b3, cal = self._make_b3(raw_det=0.9, raw_sim=0.8)
         # Force known calibrated values
         S_det_val, S_sim_val = 0.88, 0.72
@@ -315,7 +315,7 @@ class TestB3RTMFullSystem(unittest.TestCase):
         b3._cal["g_sim"] = _make_isotonic_mock(S_sim_val)
         b3.detect("content")
         last = b3._last_result
-        expected_R = round(0.1 * S_det_val + 0.9 * S_sim_val, 4)
+        expected_R = round(1.0 - (1.0 - S_det_val) * (1.0 - 0.75 * S_sim_val), 4)
         self.assertAlmostEqual(last["R"], expected_R, places=3)
 
 
