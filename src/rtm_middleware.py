@@ -173,11 +173,16 @@ def _build_explanation(
     Build sanitized explanation JSON.
     Strips any system-prompt or private-context leakage from segment text.
     """
-    # Sanitize segment: strip potential system-prompt markers
+    # Sanitize segment: strip potential system-prompt markers and PII
     _REDACT_PATTERNS = [
         r"(?i)system(\s*prompt|:|\s*message)",
         r"(?i)(secret|password|api.?key|token)",
         r"(?i)(ignore previous|disregard|override).{0,50}instructions",
+        r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",  # Email addresses
+        r"\b(?:\d{4}[ -]?){3}\d{4}\b",                            # Credit cards
+        r"\b\d{3}-\d{2}-\d{4}\b",                                 # SSN
+        r"\b(?:US\d{2}[A-Z0-9]{10,30})\b",                        # IBAN
+        r"\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b",  # Phone numbers
     ]
     clean_segment = segment
     for pat in _REDACT_PATTERNS:
