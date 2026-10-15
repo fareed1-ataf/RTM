@@ -104,6 +104,7 @@ class ExperimentConfig:
 @dataclass
 class SecretsConfig:
     gemini_api_key: str = ""
+    gemini_api_keys: List[str] = field(default_factory=list)
     ollama_base_url: str = "http://localhost:11434"
 
 
@@ -273,6 +274,7 @@ def load_config(project_root: Optional[Path] = None) -> Config:
         ),
         secrets=SecretsConfig(
             gemini_api_key=gem_d.get("api_key", ""),
+            gemini_api_keys=gem_d.get("api_keys", []) or ([gem_d.get("api_key", "")] if gem_d.get("api_key") else []),
             ollama_base_url=oll_d.get("base_url", "http://localhost:11434"),
         ),
         paths=paths,

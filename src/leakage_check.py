@@ -39,12 +39,14 @@ log = get_logger("leakage_check", PROJECT_ROOT / "logs" / "run.log")
 # Helpers
 # ─────────────────────────────────────────────────────────────
 
-def _edit_distance(a: str, b: str, max_len: int = 300) -> int:
-    """Levenshtein distance, truncated for speed."""
+def _edit_distance(a: str, b: str, max_len: int = 300, max_diff: int = 10) -> int:
+    """Levenshtein distance, with length difference pruning."""
     a, b = a[:max_len], b[:max_len]
     if a == b:
         return 0
     la, lb = len(a), len(b)
+    if abs(la - lb) > max_diff:
+        return abs(la - lb)
     if la == 0: return lb
     if lb == 0: return la
     prev = list(range(lb + 1))
@@ -150,7 +152,9 @@ def run_leakage_check(cfg) -> bool:
     edit_violations = []
     for p_text, p_source in partition_texts:
         for m_text in memory_texts:
-            dist = _edit_distance(p_text, m_text)
+            if abs(len(p_text[:300]) - len(m_text[:300])) > edit_threshold:
+                continue
+            dist = _edit_distance(p_text, m_text, max_len=300, max_diff=edit_threshold)
             if dist <= edit_threshold:
                 edit_violations.append({
                     "partition_text": p_text[:100],

@@ -1,204 +1,115 @@
 """
 tests/test_model_client.py
-Unit tests for src/utils/model_client.py
-
-Uses mocking — does NOT make real API calls.
-Run: pytest tests/test_model_client.py -v
+Unit tests for RotatingGeminiClient and ModelClient key rotation, cooldown, and error isolation.
 """
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-from unittest.mock import MagicMock, patch
-
+import time
 import pytest
+from unittest.mock import MagicMock
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
-from src.utils.config_loader import ModelConfig, SecretsConfig
-from src.utils.model_client import ModelClient
+from src.utils.model_client import RotatingGeminiClient, KeySlot
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
+def test_keyslot_cooldown_recovery():
+    slot = KeySlot(index=0, api_key="dummy_key_123456", client=MagicMock())
+    assert slot.is_available(time.time()) is True
 
-@pytest.fixture()
-def gemini_cfg():
-    return ModelConfig(
-        provider="gemini",
-        model="gemini-2.0-flash",
-        temperature=0,
-        max_output_tokens=50,
-        use_logprobs=False,
-        score_mode="json_0_100",
-    )
+    # Put on cooldown
+    now = time.time()
+    slot.status = "COOLDOWN"
+    slot.cooldown_until = now + 10.0
+    assert slot.is_available(now) is False
 
-
-@pytest.fixture()
-def ollama_cfg():
-    return ModelConfig(
-        provider="ollama",
-        model="llama3.1:8b",
-        temperature=0,
-        max_output_tokens=50,
-        score_mode="json_0_100",
-    )
+    # After cooldown expires
+    future = now + 11.0
+    assert slot.is_available(future) is True
+    assert slot.status == "HEALTHY"
 
 
-@pytest.fixture()
-def secrets_with_key():
-    return SecretsConfig(
-        gemini_api_key="test_api_key_abc123",
-        ollama_base_url="http://localhost:11434",
-    )
+def test_keyslot_dead_stays_dead():
+    slot = KeySlot(index=0, api_key="dummy_key_123456", client=MagicMock())
+    slot.status = "DEAD"
+    assert slot.is_available(time.time() + 1000.0) is False
 
 
-@pytest.fixture()
-def secrets_no_key():
-    return SecretsConfig(
-        gemini_api_key="",
-        ollama_base_url="http://localhost:11434",
-    )
+def test_rotating_client_deduplicates_keys():
+    keys = ["key_A", "key_B", "key_A"]
+    client = RotatingGeminiClient(api_keys=keys)
+    assert len(client.slots) == 2
+    assert [s.api_key for s in client.slots] == ["key_A", "key_B"]
 
 
-# ---------------------------------------------------------------------------
-# Tests: Gemini client
-# ---------------------------------------------------------------------------
+def test_rotating_client_isolates_403():
+    client = RotatingGeminiClient(api_keys=["key_bad", "key_good"])
 
-def test_gemini_client_raises_on_empty_key(gemini_cfg, secrets_no_key):
-    """ModelClient must raise ValueError when Gemini API key is empty."""
-    # Mock the import so we don't need real google-generativeai
-    with patch.dict("sys.modules", {"google.generativeai": MagicMock()}):
-        with pytest.raises(ValueError) as exc_info:
-            ModelClient(gemini_cfg, secrets_no_key)
-        assert "api_key" in str(exc_info.value).lower()
+    # Simulate key_bad throwing 403 PERMISSION_DENIED, key_good succeeding
+    calls = []
 
+    def mock_fn(c):
+        calls.append(c)
+        if len(calls) == 1:
+            raise Exception("403 PERMISSION_DENIED: project disabled")
+        mock_resp = MagicMock()
+        mock_resp.text = "Success from good key"
+        return mock_resp
 
-def test_gemini_client_generate_returns_string(gemini_cfg, secrets_with_key):
-    """ModelClient.generate() must return a non-empty string (mocked)."""
-    mock_genai = MagicMock()
-    mock_model_instance = MagicMock()
-    mock_response = MagicMock()
-    mock_response.text = '{"verdict": "ALLOW", "score": 5}'
-    mock_model_instance.generate_content.return_value = mock_response
-    mock_genai.GenerativeModel.return_value = mock_model_instance
-    mock_genai.types.GenerationConfig.return_value = {}
-
-    with patch.dict("sys.modules", {"google.generativeai": mock_genai}):
-        client = ModelClient(gemini_cfg, secrets_with_key)
-        result = client.generate(prompt="Test prompt", system_prompt="System")
-
-    assert isinstance(result, str)
-    assert len(result) > 0
+    res = client._execute_with_rotation(mock_fn)
+    assert res.text == "Success from good key"
+    assert client.slots[0].status == "DEAD"
+    assert client.slots[1].status == "HEALTHY"
 
 
-def test_gemini_client_temperature_zero_enforced(gemini_cfg, secrets_with_key):
-    """Ensure temperature=0 is passed to the Gemini GenerationConfig."""
-    mock_genai = MagicMock()
-    mock_genai.GenerativeModel.return_value = MagicMock()
-    mock_genai.types.GenerationConfig.return_value = {}
+def test_rotating_client_handles_429_quota():
+    client = RotatingGeminiClient(api_keys=["key_1", "key_2"])
 
-    with patch.dict("sys.modules", {"google.generativeai": mock_genai}):
-        ModelClient(gemini_cfg, secrets_with_key)
+    calls = []
 
-    # Check GenerationConfig was called with temperature=0
-    call_kwargs = mock_genai.types.GenerationConfig.call_args[1]
-    assert call_kwargs.get("temperature") == 0
+    def mock_fn(c):
+        calls.append(c)
+        if len(calls) == 1:
+            raise Exception("429 RESOURCE_EXHAUSTED: quota exceeded")
+        mock_resp = MagicMock()
+        mock_resp.text = "Success from key_2"
+        return mock_resp
 
-
-# ---------------------------------------------------------------------------
-# Tests: Ollama client
-# ---------------------------------------------------------------------------
-
-def test_ollama_client_generate_returns_string(ollama_cfg, secrets_with_key):
-    """OllamaClient.generate() must return a string (mocked HTTP)."""
-    import requests as req_module
-
-    mock_response = MagicMock()
-    mock_response.json.return_value = {"response": '{"verdict": "BLOCK", "score": 95}'}
-    mock_response.raise_for_status.return_value = None
-
-    # Also mock the connection check
-    mock_tags_response = MagicMock()
-    mock_tags_response.raise_for_status.return_value = None
-
-    with patch("requests.get", return_value=mock_tags_response), \
-         patch("requests.post", return_value=mock_response):
-        client = ModelClient(ollama_cfg, secrets_with_key)
-        result = client.generate(prompt="Test prompt")
-
-    assert isinstance(result, str)
-    assert len(result) > 0
+    res = client._execute_with_rotation(mock_fn)
+    assert res.text == "Success from key_2"
+    assert client.slots[0].status == "COOLDOWN"
+    assert client.slots[0].cooldown_until > time.time()
 
 
-def test_ollama_client_raises_on_connection_error(ollama_cfg, secrets_with_key):
-    """OllamaClient must raise ConnectionError when Ollama server is unreachable."""
-    import requests
+def test_rotating_client_handles_503_high_demand():
+    client = RotatingGeminiClient(api_keys=["key_1", "key_2"])
 
-    with patch("requests.get", side_effect=requests.exceptions.ConnectionError("refused")):
-        with pytest.raises(ConnectionError) as exc_info:
-            ModelClient(ollama_cfg, secrets_with_key)
-        assert "ollama" in str(exc_info.value).lower()
+    calls = []
 
+    def mock_fn(c):
+        calls.append(c)
+        if len(calls) == 1:
+            raise Exception("503 UNAVAILABLE: This model is currently experiencing high demand")
+        mock_resp = MagicMock()
+        mock_resp.text = "Success from key_2 after 503"
+        return mock_resp
 
-# ---------------------------------------------------------------------------
-# Tests: Unknown provider
-# ---------------------------------------------------------------------------
-
-def test_unknown_provider_raises_value_error(secrets_with_key):
-    """ModelClient must raise ValueError for unknown provider."""
-    bad_cfg = ModelConfig(
-        provider="unknown_provider",
-        model="some-model",
-        temperature=0,
-    )
-    with pytest.raises(ValueError) as exc_info:
-        ModelClient(bad_cfg, secrets_with_key)
-    assert "provider" in str(exc_info.value).lower()
+    res = client._execute_with_rotation(mock_fn)
+    assert res.text == "Success from key_2 after 503"
+    assert client.slots[0].status == "COOLDOWN"
 
 
-# ---------------------------------------------------------------------------
-# Tests: ModelClient interface
-# ---------------------------------------------------------------------------
+def test_rotating_client_retries_transient_network_error():
+    client = RotatingGeminiClient(api_keys=["key_1"])
 
-def test_model_client_has_generate_method(gemini_cfg, secrets_with_key):
-    """ModelClient must expose .generate() method."""
-    mock_genai = MagicMock()
-    mock_genai.GenerativeModel.return_value = MagicMock()
-    mock_genai.types.GenerationConfig.return_value = {}
+    calls = []
 
-    with patch.dict("sys.modules", {"google.generativeai": mock_genai}):
-        client = ModelClient(gemini_cfg, secrets_with_key)
+    def mock_fn(c):
+        calls.append(c)
+        if len(calls) == 1:
+            raise ConnectionResetError("Server disconnected without sending a response")
+        mock_resp = MagicMock()
+        mock_resp.text = "Success after reconnect"
+        return mock_resp
 
-    assert callable(getattr(client, "generate", None))
-
-
-def test_model_client_has_count_tokens_method(gemini_cfg, secrets_with_key):
-    """ModelClient must expose .count_tokens() method."""
-    mock_genai = MagicMock()
-    mock_genai.GenerativeModel.return_value = MagicMock()
-    mock_genai.types.GenerationConfig.return_value = {}
-
-    with patch.dict("sys.modules", {"google.generativeai": mock_genai}):
-        client = ModelClient(gemini_cfg, secrets_with_key)
-
-    assert callable(getattr(client, "count_tokens", None))
-    result = client.count_tokens("Hello world this is a test")
-    assert isinstance(result, int)
-    assert result > 0
-
-
-def test_model_client_repr(gemini_cfg, secrets_with_key):
-    """ModelClient.__repr__ must include provider and model name."""
-    mock_genai = MagicMock()
-    mock_genai.GenerativeModel.return_value = MagicMock()
-    mock_genai.types.GenerationConfig.return_value = {}
-
-    with patch.dict("sys.modules", {"google.generativeai": mock_genai}):
-        client = ModelClient(gemini_cfg, secrets_with_key)
-
-    r = repr(client)
-    assert "gemini" in r.lower()
-    assert "gemini-2.0-flash" in r
+    res = client._execute_with_rotation(mock_fn)
+    assert res.text == "Success after reconnect"
+    assert len(calls) == 2

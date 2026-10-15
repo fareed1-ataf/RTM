@@ -5,7 +5,7 @@
 
 base_detector:
   provider: "gemini"              # options: "gemini" | "ollama"
-  model: "gemini-2.0-flash"       # Gemini model name OR ollama model tag
+  model: "gemini-flash-lite-latest" # High throughput, zero daily cap
   temperature: 0
   max_output_tokens: 50           # Score + verdict only — short response
   use_logprobs: false             # Gemini does not expose token log-probs
@@ -15,14 +15,14 @@ base_detector:
 
 agent_llm:
   provider: "gemini"
-  model: "gemini-2.0-flash"
+  model: "gemini-flash-lite-latest"
   temperature: 0
   max_output_tokens: 2048
 
 second_agent_llm:
   # Used only for robustness cross-model test in E3 (supplementary)
   provider: "ollama"
-  model: "llama3.1:8b"
+  model: "llama3:latest"
   temperature: 0
   max_output_tokens: 2048
 

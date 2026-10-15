@@ -1,0 +1,14 @@
+metadata:
+  title: RTM Pre-Registration & Parameter Freeze
+  date: '2026-10-15'
+  status: FROZEN
+calibration:
+  frozen: true
+  alpha: 0.1
+  tau: 0.6138383838383838
+  f1_calibration: 0.0344
+  fpr_calibration: 0.0
+  tpr_calibration: 0.0175
+  calibration_date: '2026-10-15'
+  n_calibration_items: 750
+  fpr_budget: 0.01
