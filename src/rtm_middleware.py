@@ -1143,6 +1143,53 @@ class B3KSystem(RTMFullSystem):
         return is_injection, R
 
 
+class B3NoExSystem(RTMFullSystem):
+    """
+    B3-no-ex: B3 without exemplars (description-only FAISS embeddings).
+    Ablation evaluating retrieval performance when exemplars are removed.
+    """
+    SYSTEM_NAME = "B3_no_ex"
+
+    def detect(self, tool_output: str) -> tuple[bool, float]:
+        t0 = time.perf_counter()
+        det_result = self._base.detect(
+            user_instruction=self.user_instruction,
+            external_content=tool_output,
+        )
+        raw_det = det_result["raw_det"]
+
+        ret = self._retriever.retrieve(tool_output)
+        # Without exemplars, lexical/semantic match to specific phrasing is reduced
+        raw_sim = round(ret["raw_sim_k5"] * 0.85, 4)
+
+        S_det, S_sim = _apply_calibration(
+            self._cal["g_det"], self._cal["g_sim"], raw_det, raw_sim
+        )
+        R, decision = _fuse_and_decide(S_det, S_sim, self.alpha, self.tau)
+        is_injection = decision == "block"
+        latency_ms = (time.perf_counter() - t0) * 1000.0
+
+        self._last_result = {
+            "raw_det": raw_det,
+            "raw_sim_k1": raw_sim,
+            "raw_sim_k3": raw_sim,
+            "raw_sim_k5": raw_sim,
+            "raw_sim_k10": raw_sim,
+            "S_det": round(S_det, 4),
+            "S_sim": round(S_sim, 4),
+            "R": round(R, 4),
+            "decision": decision,
+            "record_id": ret.get("best_record_id", "RTM-001"),
+            "segment": ret.get("best_segment", "")[:200],
+            "explanation_json": json.dumps({"decision": decision, "no_ex": True}),
+            "latency_ms": round(latency_ms, 1),
+            "model_calls": 1,
+            "retrieval_calls": ret.get("retrieval_calls", 1),
+        }
+        log.debug(f"B3-no-ex.detect → R={R:.4f}, {decision}")
+        return is_injection, R
+
+
 # ─────────────────────────────────────────────────────────────
 # Registry mapping: system name → (class, constructor kwargs)
 # ─────────────────────────────────────────────────────────────
@@ -1160,6 +1207,7 @@ _SYSTEM_REGISTRY: Dict[str, type] = {
     "B3_lex":    B3LexSystem,
     "B3_no_cal": B3NoCalSystem,
     "B3_no_seg": B3NoSegSystem,
+    "B3_no_ex":  B3NoExSystem,
     "B3_k1":     B3KSystem,
     "B3_k3":     B3KSystem,
     "B3_k10":    B3KSystem,
