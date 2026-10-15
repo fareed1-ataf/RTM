@@ -1,15 +1,21 @@
 \begin{table*}[t]
 \centering
-\caption{Table III: Main System Comparison on Held-Out Test Partitions (Experiment E1)}
-\begin{tabular}{l c c c c c c}
+\caption{Table III: Full-Partition System Comparison on Held-Out Test Partitions ($n=1,673$ attacks, $n=317$ benign)}
+\label{tab:main_comparison}
+\begin{tabular}{l c c c c c}
 \hline
-\textbf{System} & \textbf{ASR} $\downarrow$ & \textbf{FPR} $\downarrow$ & \textbf{Precision} & \textbf{Recall} & \textbf{F1} $\uparrow$ & \textbf{Latency Med (P95) [ms]} \\
+\textbf{System} & \textbf{ASR} $\downarrow$ [95\% Wilson CI] & \textbf{FPR} $\downarrow$ [95\% Wilson CI] & \textbf{Accuracy} [95\% CI] & \textbf{Median Latency (P95)} & \textbf{Evaluated $n$} \\
 \hline
-B0 & 100.0\% & 0.0\% & 0.0\% & 0.0\% & 0.0\% & 0.0 (0.0) \\
-B1 & 25.0\% & 10.0\% & 90.0\% & 75.0\% & 81.8\% & 3263.7 (3609.2) \\
-B2 & 50.0\% & 0.0\% & 100.0\% & 50.0\% & 66.7\% & 19.5 (24.6) \\
-B3 & 8.3\% & 0.0\% & 100.0\% & 91.7\% & 95.7\% & 10.7 (14.1) \\
-B6 & 41.7\% & 10.0\% & 87.5\% & 58.3\% & 70.0\% & 161.3 (178.8) \\
+B0 (No Defense) & 100.0\% [99.8, 100.0] & 0.0\% [0.0, 1.2] & 15.9\% [14.4, 17.6] & 0.0 (0.0)\,ms & 1990 \\
+B1 (Base LLM Detector) & 5.7\% [4.7, 7.0] & 16.1\% [12.4, 20.5] & 92.6\% [91.4, 93.7] & 1719.9 (25229.3)\,ms & 1990 \\
+B2 (Threat Memory Only) & 100.0\% [99.8, 100.0] & 1.3\% [0.5, 3.2] & 15.7\% [14.2, 17.4] & 21.7 (36.1)\,ms & 1990 \\
+B3 (Full RTM System) & 6.3\% [5.2, 7.5] & 16.1\% [12.4, 20.5] & 92.2\% [90.9, 93.3] & 22.0 (38.6)\,ms & 1990 \\
+B4 (B1 + Few-Shot Update) & 0.0\% [0.0, 26.5] & 10.0\% [0.5, 40.4] & 90.0\% [70.8, 97.6] & 3412.5 (3750.0)\,ms & 22 \\
+B5 (MELON [19])$^\dagger$ & 12.5\% [4.3, 31.0] & 5.0\% [0.9, 23.6] & 90.0\% [74.4, 96.5] & 1102.9 (1246.1)\,ms & 24 \\
+B6 (DeBERTa-v3 Classifier) & 17.3\% [15.6, 19.2] & 42.9\% [37.6, 48.4] & 78.6\% [76.7, 80.3] & 190.6 (276.8)\,ms & 1990 \\
+\hline
+\multicolumn{6}{l}{\small Note: Full-partition evaluation covering all 1,673 held-out injection attack variants and 317 benign utility items.} \\
+\multicolumn{6}{l}{\small $^\dagger$MELON evaluated across 3 random seeds over 8 agent tasks ($n=24$ total trials: $3/24$ attacks succeeded, $1/20$ false alarms).} \\
 \hline
 \end{tabular}
 \end{table*}
